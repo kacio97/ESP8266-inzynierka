@@ -10,6 +10,7 @@
 
 //Do wyliczania wysokości
 #define SEALEVELPRESSURE_HPA (1013.25)
+// #define INTERVAL_MESSAGE 7000
 
 //Czujnik BME
 Adafruit_BME280 bme;
@@ -25,9 +26,20 @@ IPAddress soft_msk(255, 255, 255, 0);
 String ssid_h = "";
 String passwd_h = "";
 String mqttServer_h = "";
+String topicTemp_h = "";
+String topicHumid_h = "";
+String topicPress_h = "";
 String clientId_h = "ESP-8266-";
 String isOn = "0,0,0,";
 String isOn2 = "0,0,0,";
+String lightStatus = "";
+int linghtInputStatus = 0;
+int lightValue = 0;
+bool isTriggered = false;
+unsigned long timeMessage = 0;
+unsigned long timeButton = 0;
+unsigned long intevalMessage = 7000;
+unsigned long intervalButton = 300;
 
 // Nazwy tematow do publikacji dla MQTT
 const char *mqttTopicTemp = "temperatura";
@@ -58,7 +70,8 @@ void callback(char *topic, byte *message, unsigned int length);
 void fillRGB(int, int, int);
 
 // zmienne dla GPIO
-int ledPin = 2;
+int buttonPin = 0;
+int lightPin = 2;
 int redPin = 14;
 int greenPin = 12;
 int bluePin = 13;
@@ -77,7 +90,8 @@ void setup()
   //Uzywane do monitorowania (LOGI)
   Serial.begin(9600);
   EEPROM.begin(512);
-  // pinMode(ledPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(lightPin, OUTPUT);
   pinMode(redPin, OUTPUT);
   pinMode(greenPin, OUTPUT);
   pinMode(bluePin, OUTPUT);
@@ -102,6 +116,8 @@ void setup()
 
 void loop()
 {
+  server.handleClient();
+if(ssid_h != "") {
   if (WiFi.status() == WL_CONNECTED)
   {
     if (!client.connected())
@@ -109,41 +125,74 @@ void loop()
       reconnectMqtt();
     }
   }
+}
 
   // // Wykonuj w pętli
   client.loop();
-  server.handleClient();
 
   if (isOn2 == "1020,1020,1020,")
   {
     fillRGB(1023, 1023, 1023);
   }
 
-  Serial.println("Temperatura: " + (String)bme.readTemperature() + "°C");
-  Serial.print("Ciśnienie: ");
-  Serial.print(bme.readPressure() / 100.0F);
-  Serial.println(" hPa");
-  Serial.println("Wilgotność: " + (String)bme.readHumidity() + "%");
-  Serial.println("Wysokość: " + (String)bme.readAltitude(SEALEVELPRESSURE_HPA) + " mNpm");
-  Serial.println("");
-  Serial.println("IsON " + isOn);
-  Serial.println("IsON 2 " + isOn2);
-  String temperatura = (String)bme.readTemperature();
-  temperatura += "°C";
-  float prss = bme.readPressure() / 100.0F;
-  String cisnienie = (String)prss;
-  cisnienie += " hPa";
-  String wilgotnosc = (String)bme.readHumidity();
-  wilgotnosc += " %";
-
-  if (client.connected())
+  if (millis() >= timeButton + intervalButton)
   {
-    client.publish(mqttTopicTemp, (char *)temperatura.c_str());
-    client.publish(mqttTopicCis, (char *)cisnienie.c_str());
-    client.publish(mqttTopicWilg, (char *)wilgotnosc.c_str());
-    client.publish("ison", (char *)isOn2.c_str());
+    linghtInputStatus = digitalRead(buttonPin);
+    timeButton += intervalButton;
+    if (linghtInputStatus == 0)
+    {
+      if (lightValue == 0)
+      {
+        digitalWrite(lightPin, HIGH);
+        lightValue = 1;
+        lightStatus = "on";
+      }
+      else
+      {
+        digitalWrite(lightPin, LOW);
+        lightValue = 0;
+        lightStatus = "off";
+      }
+      if (client.publish("light", lightStatus.c_str()))
+      {
+        Serial.println("swiatlo wyslalem !");
+      }
+      isTriggered = false;
+      Serial.println("uzyto guzika do swiatla: " + lightValue);
+    }
   }
-  delay(5000);
+
+  if (millis() >= timeMessage + intevalMessage)
+  {
+    timeMessage += intevalMessage;
+
+    Serial.println("Temperatura: " + (String)bme.readTemperature() + "°C");
+    Serial.print("Ciśnienie: ");
+    Serial.print(bme.readPressure() / 100.0F);
+    Serial.println(" hPa");
+    Serial.println("Wilgotność: " + (String)bme.readHumidity() + "%");
+    Serial.println("Wysokość: " + (String)bme.readAltitude(SEALEVELPRESSURE_HPA) + " mNpm");
+    Serial.println("");
+    Serial.println("IsON " + isOn);
+    Serial.println("IsON 2 " + isOn2);
+    Serial.println("lightStatus " + lightStatus);
+    String temperatura = (String)bme.readTemperature();
+    temperatura += "°C";
+    float prss = bme.readPressure() / 100.0F;
+    String cisnienie = (String)prss;
+    cisnienie += " hPa";
+    String wilgotnosc = (String)bme.readHumidity();
+    wilgotnosc += " %";
+
+    if (client.connected())
+    {
+      client.publish(topicTemp_h.c_str(), (char *)temperatura.c_str());
+      client.publish(topicPress_h.c_str(), (char *)cisnienie.c_str());
+      client.publish(topicHumid_h.c_str(), (char *)wilgotnosc.c_str());
+      client.publish("ison", (char *)isOn2.c_str());
+     client.publish("light", lightStatus.c_str());
+    }
+  }
 }
 
 void callback(char *topic, byte *message, unsigned int length)
@@ -159,6 +208,25 @@ void callback(char *topic, byte *message, unsigned int length)
     messageTemp += (char)message[i];
   }
   Serial.println();
+
+  if (String(topic) == "lightOutput")
+  {
+    //DO zrobienia
+    if (messageTemp == "on")
+    {
+      Serial.println("Wlaczam swiatlo");
+      digitalWrite(lightPin, HIGH);
+      lightValue = 1;
+      lightStatus = "on";
+    }
+    else if (messageTemp == "off")
+    {
+      Serial.println("Wylaczam swiatlo");
+      digitalWrite(lightPin, LOW);
+      lightValue = 0;
+      lightStatus = "off";
+    }
+  }
 
   //Jeśli wiadomosc do nas dotrze na temat ledOutput sprawdzamy jaki kolor dostalismy i go ustawiamy wedlug informacji
   if (String(topic) == "ledOutput")
@@ -212,11 +280,6 @@ void callback(char *topic, byte *message, unsigned int length)
     Serial.println();
     fillRGB(redColor, greenColor, blueColor);
   }
-
-  if (String(topic) == "lightSwitch")
-  {
-    //DO zrobienia
-  }
 }
 
 void reconnectMqtt()
@@ -232,6 +295,7 @@ void reconnectMqtt()
       // Subskrybuj temat
       // client.setCallback(callback);
       client.subscribe("ledOutput");
+      client.subscribe("lightOutput");
     }
     else
     {
@@ -304,9 +368,11 @@ void ServerHttpSetup()
 
 void mqttClientSetup()
 {
-  mqttServer_h += WiFi.macAddress();
+  // mqttServer_h += WiFi.macAddress();
+  Serial.println(mqttServer_h);
   client.setServer(mqttServer_h.c_str(), 1883);
   client.setCallback(callback);
+  delay(2000);
   // client.setServer((char *)mqttServer_h.c_str(), 1883);
   if (!client.connected())
   {
@@ -314,6 +380,7 @@ void mqttClientSetup()
     {
       Serial.println("Połączono się z serwerem MQTT");
       client.subscribe("ledOutput");
+      client.subscribe("lightOutput");
     }
     else
     {
@@ -325,7 +392,7 @@ void mqttClientSetup()
 
 void wiFiSetup()
 {
-  if (ssid_h != soft_ssid)
+  if (!ssid_h.isEmpty())
   {
     //POŁĄCZENIE WIFI
     WiFi.mode(WIFI_STA);
@@ -338,7 +405,7 @@ void wiFiSetup()
       delay(1000);
       Serial.print(".");
       index++;
-      if (index > 30)
+      if (index > 20)
       {
         break;
       }
@@ -381,14 +448,20 @@ void handleRoot()
 {
 
   String htmlConfigSite = "<head><title>Konfiguracja modulu ESP</title></head>\
-  <h4>Wypelnij wszystkie pola!</h4>\
+  <h4>Wypelnij wszystkie wymagane pola!</h4>\
     </br>\
-    < form action='/connect' method='POST'>\
+    <form action='/connect' method='POST'>\
     <input type='text' name='ssid' placeholder='Nazwa Sieci*'>\
     </br>\
     <input type='password' name='password' placeholder='Haslo*'>\
     </br>\
     <input type='text' name='mqtt' placeholder='Adres serwera MQTT*'>\
+    </br>\
+    <input type='text' name='temperature' placeholder='Nazwa tematu temperatura*'>\
+    </br>\
+    <input type='text' name='humidity' placeholder='Nazwa tematu wilgotnosc*'>\
+    </br>\
+    <input type='text' name='pressure' placeholder='Nazwa tematu cisnienie*'>\
     </br>\
     <input type = 'submit' value = 'Zapisz dane'>\
     </form>\
@@ -397,7 +470,11 @@ void handleRoot()
     <b> *Nazwa sieci</ b> : <i> nazwa sieci twojego routera wifi</i></br>\
     <b> *Haslo : </b><i> haslo do twojej sieci wifi</i></br>\
     <b> *Adres serwera MQTT : </b><i> Sprawdz na stronie WWW z ktorej korzystasz np.domoticzgoogleHome etc.\
-    </br>lub jezeli uzywasz lokalnego borkera uzyj aresu IP przypisanego przez router</ i></ br>\
+    </br>lub jezeli uzywasz lokalnego borkera uzyj aresu IP przypisanego przez router</ i></br>\
+    <b> *Nazwa tematu temperatura : </b><i> Nazwa tematu dla czujnika temperatury, ktory ma byc rozglaszany dla serwera MQTT </i></br>\
+    <b> *Nazwa tematu wilgotnosc : </b><i> Nazwa tematu dla czujnika wilgotnosci, ktory ma byc rozglaszany dla serwera MQTT </i></br>\
+    <b> *Nazwa tematu cisnienie : </b><i> Nazwa tematu dla czujnika cisnienia, ktory ma byc rozglaszany dla serwera MQTT </i></br>\
+    <b> *Uwagi dla tematow : </b><i> Nazwa tematow dla czujnikow musza byc unikalne dla kazdej plytki </i></br>\
     </br><b><i> Uwaga wymagane sa pola oznaczone gwiazdka * </ i></b></h6></p> ";
 
   server.send(200, "text/html", htmlConfigSite);
@@ -409,7 +486,8 @@ void handleConnection()
                      "<h3><p>Czy chcesz powrócić do <a href='/'>strony konfiguracyjnej ?</a>.</p></h3><br><br>"
                      "</body></html>");
 
-  if (!server.hasArg("ssid") || !server.hasArg("password") || !server.hasArg("mqtt") || server.arg("ssid") == NULL || server.arg("password") == NULL || server.arg("mqtt") == NULL)
+  if (!server.hasArg("ssid") || !server.hasArg("password") || !server.hasArg("mqtt") || !server.hasArg("temperature") || !server.hasArg("humidity") || !server.hasArg("pressure") ||
+   server.arg("ssid") == NULL || server.arg("password") == NULL || server.arg("mqtt") == NULL || server.arg("temperature") == NULL || server.arg("humidity") == NULL || server.arg("pressure") == NULL)
   {
     server.send(400, "text/plain", "400: Invalid Request"); // The request is invalid, so send HTTP status 400
     return;
@@ -419,6 +497,9 @@ void handleConnection()
     ssid_h = server.arg("ssid");
     passwd_h = server.arg("password");
     mqttServer_h = server.arg("mqtt");
+    topicTemp_h = server.arg("temperature");
+    topicHumid_h = server.arg("humidity");
+    topicPress_h = server.arg("pressure");
     // server.arg("ssid").toCharArray(ssid, ssid_h.length());
     // server.arg("password").toCharArray(passwd, passwd_h.length());
     // server.arg("mqtt").toCharArray(mqttServer, mqttServer_h.length());
@@ -427,12 +508,21 @@ void handleConnection()
     server.sendContent(passwd_h);
     server.sendContent("<br>");
     server.sendContent(mqttServer_h);
+     server.sendContent("<br>");
+    server.sendContent(topicTemp_h);
+     server.sendContent("<br>");
+    server.sendContent(topicHumid_h);
+     server.sendContent("<br>");
+    server.sendContent(topicPress_h);
     Serial.println("odebrano informacje z formularza");
     Serial.print(ssid_h);
     // Serial.println(ssid.length());
     Serial.print(passwd_h);
     // Serial.println(passwd.length());
     Serial.print(mqttServer_h);
+    Serial.print(topicTemp_h);
+    Serial.print(topicHumid_h);
+    Serial.print(topicPress_h);
     // Serial.println(mqttServer.length());
     delay(2000);
     saveDataToEEPROM();
@@ -461,6 +551,16 @@ void saveDataToEEPROM()
   delay(2000);
   writeDataToEEPROM(ssid_h.length() + passwd_h.length() + 2, mqttServer_h);
   Serial.println("");
+  delay(2000);
+  writeDataToEEPROM(ssid_h.length() + passwd_h.length() + mqttServer_h.length() + 3, topicTemp_h);
+    Serial.println("");
+  delay(2000);
+  writeDataToEEPROM(ssid_h.length() + passwd_h.length() + mqttServer_h.length() + topicTemp_h.length() + 4, topicHumid_h);
+    Serial.println("");
+  delay(2000);
+  writeDataToEEPROM(ssid_h.length() + passwd_h.length() + mqttServer_h.length()+topicTemp_h.length() + topicHumid_h.length() + 5, topicPress_h);
+  Serial.println("");
+
   // EEPROM.put(0 + sizeof(ssid) + sizeof(passwd), mqttServer);
   delay(2000);
   Serial.println("Koniec zapisu do EEPROM");
@@ -493,7 +593,11 @@ void loadDataFromEEPROM()
   delay(2000);
   mqttServer_h = readDataFromEEPROM(0 + ssid_h.length() + passwd_h.length() + 2);
   // EEPROM.get(0 + sizeof(ssid) + sizeof(passwd), mqttServer);
+  topicTemp_h = readDataFromEEPROM(0 + ssid_h.length() + passwd_h.length() + mqttServer_h.length() + 3);
   delay(2000);
+  topicHumid_h = readDataFromEEPROM(0 + ssid_h.length() + passwd_h.length() + mqttServer_h.length() + topicTemp_h.length() + 4);
+    delay(2000);
+  topicPress_h = readDataFromEEPROM(0 + ssid_h.length() + passwd_h.length() + mqttServer_h.length() + topicTemp_h.length() + topicHumid_h.length() + 5);
   // EEPROM.end();
   delay(2000);
   Serial.println("Przywrócono dane z pamięcie EEPROM");
@@ -503,6 +607,12 @@ void loadDataFromEEPROM()
   Serial.println(passwd_h);
   Serial.print("Adres serwera MQTT: ");
   Serial.println(mqttServer_h);
+  Serial.print("Nazwa tematu dla temperatury: ");
+  Serial.println(topicTemp_h);
+  Serial.print("Nazwa tematu dla wilgotnosci: ");
+  Serial.println(topicHumid_h);
+  Serial.print("Nazwa tematu dla cisnienia: ");
+  Serial.println(topicPress_h);
 }
 
 String readDataFromEEPROM(int address)
