@@ -46,7 +46,7 @@ const char *mqttTopicTemp = "temperatura";
 const char *mqttTopicCis = "cisnienie";
 const char *mqttTopicWilg = "wilgotnosc";
 
-// Prototypy funkcji do obłsugi rządań HTTP
+// Prototypy funkcji do obłsugi żądań HTTP
 void handleRoot();
 void handleConnection();
 void handleNotFound();
